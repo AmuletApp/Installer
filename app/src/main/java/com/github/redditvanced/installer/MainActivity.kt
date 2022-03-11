@@ -2,8 +2,8 @@ package com.github.redditvanced.installer
 
 import android.app.Activity
 import android.app.PendingIntent
+import android.content.Intent
 import android.content.pm.PackageInstaller
-import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
@@ -141,45 +141,56 @@ fun install(activity: Activity) {
 
     Log.i("Installer", "Downloading APKs")
     val mainApkFile = File(buildDir, "com.reddit.frontpage.apk")
-//    val time = measureTimeMillis {
-//        URL(apiApk.downloadUrl).openStream().use {
-//            mainApkFile.writeBytes(it.readBytes())
-//        }
-//
-//        for (split in apiApk.splitDeliveryDataList) {
-//            URL(split.downloadUrl).openStream().use {
-//                File(buildDir, "${split.name}.apk").writeBytes(it.readBytes())
-//            }
-//        }
-//    }
-//    Log.i("Installer", "Downloaded APKs in ${time}ms")
+    // TODO: debug
+    if (!mainApkFile.exists()) {
+        val time = measureTimeMillis {
+            URL(apiApk.downloadUrl).openStream().use {
+                mainApkFile.writeBytes(it.readBytes())
+            }
+
+            for (split in apiApk.splitDeliveryDataList) {
+                URL(split.downloadUrl).openStream().use {
+                    File(buildDir, "${split.name}.apk").writeBytes(it.readBytes())
+                }
+            }
+        }
+        Log.i("Installer", "Downloaded APKs in ${time}ms")
+    }
 
     Log.i("Installer", "Patching main apk")
-    val mainApkZip = Zip(mainApkFile.absolutePath, 6, 'a')
+    var mainApkZip = Zip(mainApkFile.absolutePath, 6, 'r')
 
     var dexCount = 0
     val entryDexRegex = "classes(\\d).dex".toRegex()
     for (i in 0 until mainApkZip.totalEntries) {
         mainApkZip.openEntryByIndex(i)
-        val index = entryDexRegex.find(mainApkZip.entryName)
-            ?.groups
-            ?.get(1)!!.value
-            .toIntOrNull()
+        val name = mainApkZip.entryName
+        mainApkZip.closeEntry()
+
+        val index = entryDexRegex.find(name)
+            ?.groupValues
+            ?.get(1)
+            ?.toIntOrNull()
             ?: continue
         if (dexCount < index) dexCount = index
     }
 
-    // read original classes.dex
+    // Read original classes.dex
     mainApkZip.openEntry("classes.dex")
     val originalClassesDex = mainApkZip.readEntry()
     mainApkZip.closeEntry()
 
-    // write original classes.dex to classesN+1.dex, N being the dex count
+    // Reopen APK with append (writing) flag
+    mainApkZip.close()
+    mainApkZip = Zip(mainApkFile.absolutePath, 6, 'a')
+
+    // Write original classes.dex to the end of the classesN.dex list
+    mainApkZip.deleteEntry("classes.dex")
     mainApkZip.openEntry("classes${dexCount + 1}.dex")
     mainApkZip.writeEntry(originalClassesDex, originalClassesDex.size.toLong())
     mainApkZip.closeEntry()
 
-    // copy injector zip contents into apk
+    // Copy injector zip contents into apk
     val injectorZip = Zip(getInjector(activity).absolutePath, 6, 'r')
     for (i in 0 until injectorZip.totalEntries) {
         injectorZip.openEntryByIndex(i)
@@ -187,9 +198,9 @@ fun install(activity: Activity) {
 
         mainApkZip.openEntry(injectorZip.entryName)
         mainApkZip.writeEntry(bytes, bytes.size.toLong())
-        mainApkZip.closeEntry()
 
         injectorZip.closeEntry()
+        mainApkZip.closeEntry()
     }
 
     injectorZip.close()
@@ -204,12 +215,11 @@ fun install(activity: Activity) {
     Log.i("Installer", "Installing apks")
     val packageInstaller = activity.packageManager.packageInstaller
 
-    val sessionParams =
-        PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-        sessionParams.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+//    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+//        sessionParams.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
 
-    val sessionId = packageInstaller.createSession(sessionParams)
+    val sessionId = packageInstaller.createSession(params)
     val session = packageInstaller.openSession(sessionId)
     apkFiles.forEach { apk ->
         session.openWrite(apk.name, 0, apk.length()).use {
@@ -218,10 +228,12 @@ fun install(activity: Activity) {
         }
     }
 
-    // send to hell
-    val contentIntent = PendingIntent.getActivity(activity, 0, null, 0)
+    val callbackIntent = Intent(activity.applicationContext, APKInstallCallbackService::class.java)
+    val contentIntent = PendingIntent.getService(activity, 0, callbackIntent, 0)
     session.commit(contentIntent.intentSender)
     session.close()
+
+    Log.i("Installer", "Triggered install, done...")
 }
 
 fun getInjector(activity: Activity): File {
