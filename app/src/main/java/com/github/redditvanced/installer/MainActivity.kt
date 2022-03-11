@@ -141,21 +141,18 @@ fun install(activity: Activity) {
 
     Log.i("Installer", "Downloading APKs")
     val mainApkFile = File(buildDir, "com.reddit.frontpage.apk")
-    // TODO: debug
-    if (!mainApkFile.exists()) {
-        val time = measureTimeMillis {
-            URL(apiApk.downloadUrl).openStream().use {
-                mainApkFile.writeBytes(it.readBytes())
-            }
+    val time = measureTimeMillis {
+        URL(apiApk.downloadUrl).openStream().use {
+            mainApkFile.writeBytes(it.readBytes())
+        }
 
-            for (split in apiApk.splitDeliveryDataList) {
-                URL(split.downloadUrl).openStream().use {
-                    File(buildDir, "${split.name}.apk").writeBytes(it.readBytes())
-                }
+        for (split in apiApk.splitDeliveryDataList) {
+            URL(split.downloadUrl).openStream().use {
+                File(buildDir, "${split.name}.apk").writeBytes(it.readBytes())
             }
         }
-        Log.i("Installer", "Downloaded APKs in ${time}ms")
     }
+    Log.i("Installer", "Downloaded APKs in ${time}ms")
 
     Log.i("Installer", "Patching main apk")
     var mainApkZip = Zip(mainApkFile.absolutePath, 6, 'r')
