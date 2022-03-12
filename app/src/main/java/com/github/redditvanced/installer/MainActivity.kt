@@ -20,6 +20,7 @@ import com.aurora.gplayapi.helpers.AuthHelper
 import com.aurora.gplayapi.helpers.PurchaseHelper
 import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.fuel.httpGet
+import com.github.kittinunf.result.Result
 import com.github.redditvanced.installer.ui.theme.InstallerTheme
 import java.io.File
 import java.net.URL
@@ -239,16 +240,23 @@ fun getInjector(activity: Activity): File {
 
     val cachedInjector = File(activity.codeCacheDir, "injector.zip")
 
-    val versionBody = "$BASE_URL/maven/releases/com/github/redditvanced/Injector/maven-metadata.xml"
-        .httpGet().body.asString("text/xml")
+    val (_, _, versionResult) = "$BASE_URL/maven/releases/com/github/redditvanced/Injector/maven-metadata.xml"
+        .httpGet().responseString()
 
-    val version = "<release>(.+?)</release>"
-        .toRegex()
-        .find(versionBody)
-        ?.groupValues
-        ?.get(1)
-        ?: throw Error("Failed to find version in maven-metadata!")
-
+    val version = when (versionResult) {
+        is Result.Failure -> {
+            Log.e("Installer", "Failed to get maven-metadata!")
+            throw versionResult.getException()
+        }
+        is Result.Success -> {
+            "<release>(.+?)</release>"
+                .toRegex()
+                .find(versionResult.get())
+                ?.groupValues
+                ?.get(0)
+                ?: throw Error("Failed to find version in maven-metadata!")
+        }
+    }
     Log.i("Installer", "Fetched injector version: $version")
 
     val zipData =
