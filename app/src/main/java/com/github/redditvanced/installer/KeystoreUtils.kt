@@ -19,17 +19,18 @@ import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import java.util.*
 
-private class KeySet(val publicKey: X509Certificate, val privateKey: PrivateKey)
 
-object Signer {
-    fun newKeystore(out: File?) {
+object KeystoreUtils {
+    class KeySet(val publicKey: X509Certificate, val privateKey: PrivateKey)
+
+    fun newKeystore(out: File) {
         val password = "password".toCharArray()
         val key = createKey()
 
         with(KeyStore.getInstance("BKS", "BC")) {
             load(null, password)
             setKeyEntry("alias", key.privateKey, password, arrayOf<Certificate>(key.publicKey))
-            store(out?.outputStream(), password)
+            store(out.outputStream(), password)
         }
     }
 
@@ -60,5 +61,18 @@ object Signer {
             JcaX509CertificateConverter().getCertificate(builder.build(signer)),
             pair.private
         )
+    }
+
+    fun loadKeyStore(file: File): KeySet {
+        val keyStore = KeyStore.getInstance("BKS", "BC")
+        file.inputStream().use { keyStore.load(it, null) }
+
+        val password = "password".toCharArray()
+        val alias = keyStore.aliases().nextElement()
+
+        val certificate = keyStore.getCertificate(alias) as X509Certificate
+        val privateKey = keyStore.getKey(alias, password) as PrivateKey
+
+        return KeySet(certificate, privateKey)
     }
 }

@@ -25,14 +25,9 @@ import com.github.kittinunf.fuel.httpGet
 import com.github.kittinunf.result.Result
 import com.github.redditvanced.installer.ui.theme.InstallerTheme
 import org.bouncycastle.util.encoders.UrlBase64
-import pxb.android.axml.AxmlVisitor
-import pxb.android.axml.AxmlWriter
-import pxb.android.axml.NodeVisitor
 import java.io.File
 import java.net.URL
 import java.security.MessageDigest
-import java.security.PrivateKey
-import java.security.cert.X509Certificate
 import java.util.*
 import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
@@ -77,7 +72,7 @@ fun install(activity: Activity) {
     val keystoreFile = File(baseDir, "keystore.ks")
     if (!keystoreFile.exists()) {
         Log.i("Installer", "No keystore exists, generating new keystore")
-        Signer.newKeystore(keystoreFile)
+        KeystoreUtils.newKeystore(keystoreFile)
     }
 
     val credentials = "$BASE_URL/google"
@@ -256,64 +251,34 @@ fun install(activity: Activity) {
     injectorZip.close()
 
     // Change AndroidManifest targetSdkVersion to 29 (Credit to Juby)
-    val reader = AxmlReader(originalManifest)
-    val writer = AxmlWriter()
-    reader.accept(object : AxmlVisitor(writer) {
-        override fun child(ns: String?, name: String) =
-            object : NodeVisitor(super.child(ns, name)) {
-                override fun child(ns: String?, name: String): NodeVisitor {
-                    val visitor = super.child(ns, name)
-                    return if (name != "uses-sdk") visitor
-                    else object : NodeVisitor(visitor) {
-                        override fun attr(
-                            ns: String?,
-                            name: String,
-                            resourceId: Int,
-                            type: Int,
-                            value: Any
-                        ) {
-                            var obj = value
-                            if ("targetSdkVersion" == name)
-                                obj = 29
-                            super.attr(ns, name, resourceId, type, obj)
-                        }
-                    }
-                }
-            }
-    })
-    val manifestBytes = writer.toByteArray()
+    val newManifest = ManifestUtils.editManifest(originalManifest)
     mainApkZip.openEntry("AndroidManifest.xml")
-    mainApkZip.writeEntry(manifestBytes, manifestBytes.size.toLong())
+    mainApkZip.writeEntry(newManifest, newManifest.size.toLong())
     mainApkZip.closeEntry()
     mainApkZip.close()
 
     Log.i("Installer", "Signing apks")
     val apkFiles = requireNotNull(buildDir.listFiles { f -> f.extension == "apk" })
 
-    val keyStore = KeyStore.getInstance("BKS", "BC")
-    keystoreFile.inputStream().use { keyStore.load(it, null) }
-    val alias = keyStore.aliases().nextElement()
-    val password = "password".toCharArray()
-    val certificate = keyStore.getCertificate(alias) as X509Certificate
-    val privateKey = keyStore.getKey(alias, password) as PrivateKey
+    val keySet = KeystoreUtils.loadKeyStore(keystoreFile)
     val signingConfig = ApkSigner.SignerConfig.Builder(
-        "RedditVanced signer",
-        privateKey,
-        listOf(certificate)
+        "RedditVanced Signer",
+        keySet.privateKey,
+        listOf(keySet.publicKey)
     ).build()
 
-    apkFiles.forEach {
-        val tmpFile = File(buildDir, "${it.name}.signed")
+    apkFiles.forEach { apk ->
+        val signedFile = File(buildDir, "${apk.name}.signed")
         ApkSigner.Builder(listOf(signingConfig))
             .setV1SigningEnabled(false)
             .setV2SigningEnabled(true)
             .setV3SigningEnabled(false)
             .setOtherSignersSignaturesPreserved(false)
-            .setInputApk(it)
-            .setOutputApk(tmpFile)
+            .setInputApk(apk)
+            .setOutputApk(signedFile)
             .build()
             .sign()
-        tmpFile.renameTo(it)
+        signedFile.renameTo(apk)
     }
 
     Log.i("Installer", "Installing apks")
@@ -337,7 +302,7 @@ fun install(activity: Activity) {
     session.commit(contentIntent.intentSender)
     session.close()
 
-    Log.i("Installer", "Triggered install, done...")
+    Log.i("Installer", "Triggered install")
 }
 
 fun getInjector(activity: Activity): File {
