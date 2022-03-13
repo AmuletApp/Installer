@@ -276,10 +276,9 @@ fun install(activity: Activity) {
     apkFiles.forEach {
         val tmpFile = File(buildDir, "${it.name}.signed")
         ApkSigner.Builder(listOf(signingConfig))
-            .setV1SigningEnabled(true)
+            .setV1SigningEnabled(false)
             .setV2SigningEnabled(true)
             .setV3SigningEnabled(false)
-            .setCreatedBy("RedditVanced Installer")
             .setOtherSignersSignaturesPreserved(false)
             .setInputApk(it)
             .setOutputApk(tmpFile)
