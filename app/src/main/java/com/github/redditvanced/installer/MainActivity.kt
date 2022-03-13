@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
@@ -15,6 +16,7 @@ import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import com.aliucord.libzip.Zip
+import com.android.apksig.ApkSigner
 import com.aurora.gplayapi.exceptions.ApiException
 import com.aurora.gplayapi.helpers.AuthHelper
 import com.aurora.gplayapi.helpers.PurchaseHelper
@@ -22,8 +24,15 @@ import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.fuel.httpGet
 import com.github.kittinunf.result.Result
 import com.github.redditvanced.installer.ui.theme.InstallerTheme
+import pxb.android.axml.AxmlReader
+import pxb.android.axml.AxmlVisitor
+import pxb.android.axml.AxmlWriter
+import pxb.android.axml.NodeVisitor
 import java.io.File
 import java.net.URL
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.cert.X509Certificate
 import java.util.*
 import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
@@ -65,10 +74,10 @@ val baseDir = File(Environment.getExternalStorageDirectory(), "RedditVanced")
 val buildDir = File(baseDir, "build")
 
 fun install(activity: Activity) {
-    val keystore = File(baseDir, "keystore.ks")
-    if (!keystore.exists()) {
+    val keystoreFile = File(baseDir, "keystore.ks")
+    if (!keystoreFile.exists()) {
         Log.i("Installer", "No keystore exists, generating new keystore")
-        Signer.newKeystore(keystore)
+        Signer.newKeystore(keystoreFile)
     }
 
     val credentials = "$BASE_URL/google"
@@ -173,6 +182,11 @@ fun install(activity: Activity) {
         if (dexCount < index) dexCount = index
     }
 
+    // Read original AndroidManifest.xml
+    mainApkZip.openEntry("AndroidManifest.xml")
+    val originalManifest = mainApkZip.readEntry()
+    mainApkZip.closeEntry()
+
     // Read original classes.dex
     mainApkZip.openEntry("classes.dex")
     val originalClassesDex = mainApkZip.readEntry()
@@ -182,40 +196,104 @@ fun install(activity: Activity) {
     mainApkZip.close()
     mainApkZip = Zip(mainApkFile.absolutePath, 6, 'a')
 
+    // Delete original AndroidManifest.xml
+    mainApkZip.deleteEntry("AndroidManifest.xml")
+
     // Write original classes.dex to the end of the classesN.dex list
     mainApkZip.deleteEntry("classes.dex")
     mainApkZip.openEntry("classes${dexCount + 1}.dex")
     mainApkZip.writeEntry(originalClassesDex, originalClassesDex.size.toLong())
     mainApkZip.closeEntry()
 
+    // libzip will corrupt apk if I write more stuff without reloading
+    mainApkZip.close()
+    mainApkZip = Zip(mainApkFile.absolutePath, 6, 'a')
+
     // Copy injector zip contents into apk
     val injectorZip = Zip(getInjector(activity).absolutePath, 6, 'r')
     for (i in 0 until injectorZip.totalEntries) {
         injectorZip.openEntryByIndex(i)
+        if (injectorZip.isEntryDir) continue
+
+        Log.i("Installer", "injector entry: ${injectorZip.entryName}")
         val bytes = injectorZip.readEntry()
 
         mainApkZip.openEntry(injectorZip.entryName)
         mainApkZip.writeEntry(bytes, bytes.size.toLong())
+        mainApkZip.closeEntry()
 
         injectorZip.closeEntry()
-        mainApkZip.closeEntry()
     }
-
     injectorZip.close()
+
+    // Change AndroidManifest targetSdkVersion to 29 (Credit to Juby)
+    val reader = AxmlReader(originalManifest)
+    val writer = AxmlWriter()
+    reader.accept(object : AxmlVisitor(writer) {
+        override fun child(ns: String?, name: String) =
+            object : NodeVisitor(super.child(ns, name)) {
+                override fun child(ns: String?, name: String): NodeVisitor {
+                    val visitor = super.child(ns, name)
+                    return if (name != "uses-sdk") visitor
+                    else object : NodeVisitor(visitor) {
+                        override fun attr(
+                            ns: String?,
+                            name: String,
+                            resourceId: Int,
+                            type: Int,
+                            value: Any
+                        ) {
+                            var obj = value
+                            if ("targetSdkVersion" == name)
+                                obj = 29
+                            super.attr(ns, name, resourceId, type, obj)
+                        }
+                    }
+                }
+            }
+    })
+    val manifestBytes = writer.toByteArray()
+    mainApkZip.openEntry("AndroidManifest.xml")
+    mainApkZip.writeEntry(manifestBytes, manifestBytes.size.toLong())
+    mainApkZip.closeEntry()
     mainApkZip.close()
 
     Log.i("Installer", "Signing apks")
     val apkFiles = requireNotNull(buildDir.listFiles { f -> f.extension == "apk" })
+
+    val keyStore = KeyStore.getInstance("BKS", "BC")
+    keystoreFile.inputStream().use { keyStore.load(it, null) }
+    val alias = keyStore.aliases().nextElement()
+    val password = "password".toCharArray()
+    val certificate = keyStore.getCertificate(alias) as X509Certificate
+    val privateKey = keyStore.getKey(alias, password) as PrivateKey
+    val signingConfig = ApkSigner.SignerConfig.Builder(
+        "RedditVanced signer",
+        privateKey,
+        listOf(certificate)
+    ).build()
+
     apkFiles.forEach {
-        Signer.signApk(it, keystore)
+        val tmpFile = File(buildDir, "${it.name}.signed")
+        ApkSigner.Builder(listOf(signingConfig))
+            .setV1SigningEnabled(true)
+            .setV2SigningEnabled(true)
+            .setV3SigningEnabled(false)
+            .setCreatedBy("RedditVanced Installer")
+            .setOtherSignersSignaturesPreserved(false)
+            .setInputApk(it)
+            .setOutputApk(tmpFile)
+            .build()
+            .sign()
+        tmpFile.renameTo(it)
     }
 
     Log.i("Installer", "Installing apks")
     val packageInstaller = activity.packageManager.packageInstaller
 
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-//    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-//        sessionParams.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+        params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
 
     val sessionId = packageInstaller.createSession(params)
     val session = packageInstaller.openSession(sessionId)

@@ -4,35 +4,24 @@
  */
 package com.github.redditvanced.installer
 
-import android.util.Base64
-import com.aliucord.libzip.Zip
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.cert.X509v3CertificateBuilder
-import org.bouncycastle.cert.jcajce.JcaCertStore
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
-import org.bouncycastle.cms.CMSProcessableByteArray
-import org.bouncycastle.cms.CMSSignedDataGenerator
-import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
-import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.IOException
 import java.math.BigInteger
-import java.security.*
+import java.security.KeyPairGenerator
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.SecureRandom
 import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import java.util.*
-import java.util.jar.Attributes
-import java.util.jar.JarFile
-import java.util.jar.Manifest
 
 private class KeySet(val publicKey: X509Certificate, val privateKey: PrivateKey)
 
 object Signer {
-    private val stripPattern = Regex("^META-INF/(.*)[.](MF|SF|RSA|DSA)$")
-
     fun newKeystore(out: File?) {
         val password = "password".toCharArray()
         val key = createKey()
@@ -72,142 +61,4 @@ object Signer {
             pair.private
         )
     }
-
-    // based on https://gist.github.com/mmuszkow/10288441
-    // and https://github.com/fornwall/apksigner/blob/master/src/main/java/net/fornwall/apksigner/ZipSigner.java
-    @Throws(Exception::class)
-    fun signApk(apkFile: File, keystore: File) {
-        val keyStore = KeyStore.getInstance("BKS", "BC")
-        keystore.inputStream().use { keyStore.load(it, null) }
-
-        val alias = keyStore.aliases().nextElement()
-        val password = "password".toCharArray()
-        val keySet = KeySet(
-            keyStore.getCertificate(alias) as X509Certificate,
-            keyStore.getKey(alias, password) as PrivateKey
-        )
-        var zip = Zip(apkFile.absolutePath, 6, 'r')
-        val dig = MessageDigest.getInstance("SHA1")
-        val digests = linkedMapOf<String, String>()
-        val filesToRemove = arrayListOf<String>()
-
-        repeat(zip.totalEntries) { i ->
-            zip.openEntryByIndex(i)
-
-            val name = zip.entryName
-
-            if (stripPattern.matches(name))
-                filesToRemove.add(name)
-            else
-                digests[name] = dig.digest(zip.readEntry()).toBase64()
-
-            zip.closeEntry()
-        }
-        zip.close()
-        zip = Zip(apkFile.absolutePath, 6, 'a')
-
-        filesToRemove.forEach(zip::deleteEntry)
-        val sectionDigests = LinkedHashMap<String, String>()
-        var manifest = Manifest()
-        var attrs = manifest.mainAttributes
-        attrs[Attributes.Name.MANIFEST_VERSION] = "1.0"
-        attrs[Attributes.Name("Created-By")] = "RedditVanced Installer"
-        val digestAttr = Attributes.Name("SHA1-Digest")
-
-        digests.forEach { (name, value) ->
-            val attributes = Attributes()
-
-            attributes[digestAttr] = value
-            manifest.entries[name] = attributes
-            sectionDigests[name] = hashEntrySection(name, attributes, dig)
-        }
-
-        ByteArrayOutputStream().use { baos ->
-            manifest.write(baos)
-
-            zip.openEntry(JarFile.MANIFEST_NAME)
-            zip.writeEntry(baos.toByteArray(), baos.size().toLong())
-            zip.closeEntry()
-        }
-
-        val manifestHash = getManifestHash(manifest, dig)
-        val tmpManifest = Manifest().apply {
-            mainAttributes.putAll(attrs)
-        }
-        val manifestMainHash = getManifestHash(tmpManifest, dig)
-
-        manifest = Manifest()
-        attrs = manifest.mainAttributes
-        attrs[Attributes.Name.SIGNATURE_VERSION] = "1.0"
-        attrs[Attributes.Name("Created-By")] = "RedditVanced Installer"
-        attrs[Attributes.Name("SHA1-Digest-Manifest")] = manifestHash
-        attrs[Attributes.Name("SHA1-Digest-Manifest-Main-Attributes")] = manifestMainHash
-        sectionDigests.forEach { (key, value) ->
-            val attributes = Attributes()
-            attributes[digestAttr] = value
-            manifest.entries[key] = attributes
-        }
-
-        var sigBytes: ByteArray
-
-        ByteArrayOutputStream().use { sigStream ->
-            manifest.write(sigStream)
-            sigBytes = sigStream.toByteArray()
-            zip.openEntry("META-INF/CERT.SF")
-            zip.writeEntry(sigBytes, sigStream.size().toLong())
-            zip.closeEntry()
-        }
-
-        val signature = signSigFile(keySet, sigBytes)
-        zip.openEntry("META-INF/CERT.RSA")
-        zip.writeEntry(signature, signature.size.toLong())
-        zip.closeEntry()
-        zip.close()
-    }
-
-    @Throws(IOException::class)
-    private fun hashEntrySection(name: String, attrs: Attributes, dig: MessageDigest): String {
-        val manifest = Manifest()
-        manifest.mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
-
-        ByteArrayOutputStream().use { baos ->
-            manifest.write(baos)
-
-            val emptyLen = baos.toByteArray().size
-            manifest.entries[name] = attrs
-            baos.reset()
-            manifest.write(baos)
-            var ob = baos.toByteArray()
-            ob = ob.copyOfRange(emptyLen, ob.size)
-            return dig.digest(ob).toBase64()
-        }
-    }
-
-    @Throws(IOException::class)
-    private fun getManifestHash(manifest: Manifest, dig: MessageDigest) =
-        ByteArrayOutputStream().use { baos ->
-            manifest.write(baos)
-            dig.digest(baos.toByteArray()).toBase64()
-        }
-
-    private fun signSigFile(keySet: KeySet, content: ByteArray): ByteArray {
-        val sha1Signer = JcaContentSignerBuilder("SHA1withRSA").build(keySet.privateKey)
-        val jcaDigestCalculatorProviderBuilder = JcaDigestCalculatorProviderBuilder()
-        val jcaSignerInfoGeneratorBuilder =
-            JcaSignerInfoGeneratorBuilder(jcaDigestCalculatorProviderBuilder.build()).apply {
-                setDirectSignature(true)
-            }
-        val sigData = CMSSignedDataGenerator().apply {
-            addSignerInfoGenerator(
-                jcaSignerInfoGeneratorBuilder.build(
-                    sha1Signer,
-                    keySet.publicKey
-                )
-            )
-            addCertificates(JcaCertStore(listOf(keySet.publicKey)))
-        }.generate(CMSProcessableByteArray(content), false)
-        return sigData.toASN1Structure().getEncoded("DER")
-    }
-
-    private fun ByteArray.toBase64() = Base64.encodeToString(this, Base64.DEFAULT)
 }
