@@ -24,13 +24,13 @@ import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.fuel.httpGet
 import com.github.kittinunf.result.Result
 import com.github.redditvanced.installer.ui.theme.InstallerTheme
-import pxb.android.axml.AxmlReader
+import org.bouncycastle.util.encoders.UrlBase64
 import pxb.android.axml.AxmlVisitor
 import pxb.android.axml.AxmlWriter
 import pxb.android.axml.NodeVisitor
 import java.io.File
 import java.net.URL
-import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.cert.X509Certificate
 import java.util.*
@@ -152,13 +152,42 @@ fun install(activity: Activity) {
     Log.i("Installer", "Downloading APKs")
     val mainApkFile = File(buildDir, "com.reddit.frontpage.apk")
     val time = measureTimeMillis {
-        URL(apiApk.downloadUrl).openStream().use {
-            mainApkFile.writeBytes(it.readBytes())
+        val downloadMainApk = {
+            Log.i("Installer", "Main APK is outdated or not cached, downloading...")
+            URL(apiApk.downloadUrl).openStream().use {
+                mainApkFile.writeBytes(it.readBytes())
+            }
+        }
+
+        if (!mainApkFile.exists())
+            downloadMainApk()
+        else {
+            val digest = MessageDigest.getInstance("SHA-1")
+            val sha1 = digest.digest(mainApkFile.readBytes())
+
+            // For whatever reason the . is missing
+            val apiSha1 = UrlBase64.decode(apiApk.sha1 + '.')
+
+            if (!MessageDigest.isEqual(apiSha1, sha1))
+                downloadMainApk()
         }
 
         for (split in apiApk.splitDeliveryDataList) {
+            val apk = File(buildDir, "${split.name}.apk")
+            if (apk.exists()) {
+                val digest = MessageDigest.getInstance("SHA-1")
+                val sha1 = digest.digest(apk.readBytes())
+
+                // For whatever reason the . is missing
+                val apiSha1 = UrlBase64.decode(split.sha1 + '.')
+
+                if (MessageDigest.isEqual(apiSha1, sha1))
+                    continue
+            }
+            Log.i("Installer", "Split ${apk.name} is outdated or not cached, downloading...")
+
             URL(split.downloadUrl).openStream().use {
-                File(buildDir, "${split.name}.apk").writeBytes(it.readBytes())
+                apk.writeBytes(it.readBytes())
             }
         }
     }
