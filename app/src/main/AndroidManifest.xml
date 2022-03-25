@@ -13,12 +13,13 @@
 
     <application
         android:allowBackup="false"
+        android:extractNativeLibs="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Installer"
-        android:largeHeap="true">
+        android:theme="@style/Theme.Installer">
         <service android:name="com.github.redditvanced.installer.APKInstallCallbackService" />
         <activity
             android:name=".MainActivity"

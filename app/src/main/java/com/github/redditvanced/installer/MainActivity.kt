@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
 }
 
 const val BASE_URL = "https://redditvanced.ddns.net"
+val supportedABIs = listOf("arm64-v8a", "armeabi-v7a", "x86-64")
 
 data class AccountCredentials(
     val username: String,
@@ -69,6 +70,14 @@ val baseDir = File(Environment.getExternalStorageDirectory(), "RedditVanced")
 val buildDir = File(baseDir, "build")
 
 fun install(activity: Activity) {
+    Log.i("Installer", "Device ABIs: ${Build.SUPPORTED_ABIS.joinToString()}")
+    Build.SUPPORTED_ABIS.first { it in supportedABIs }
+        ?: throw Error("Unsupported ABI!")
+
+    Log.i("Installer", "Extracting zipalign binary")
+    val zipalignBinary = File(activity.applicationInfo.nativeLibraryDir, "libzipalign.so")
+
+    // TODO: check if already installed but keystore gone
     val keystoreFile = File(baseDir, "keystore.ks")
     if (!keystoreFile.exists()) {
         Log.i("Installer", "No keystore exists, generating new keystore")
@@ -82,14 +91,14 @@ fun install(activity: Activity) {
 
     Log.i("Installer", "Logging into Google")
     val strProperties = """
-        UserReadableName = Google Pixel 2 (api28)
+        UserReadableName = Google Pixel 2 (api${Build.VERSION.SDK_INT})
         Build.HARDWARE = walleye
         Build.RADIO = g8998-00223-1804251450
         Build.BOOTLOADER = mw8998-002.0071.00
         Build.FINGERPRINT = google/walleye/walleye:9/PPP3.180510.008/4811556:user/release-keys
         Build.BRAND = google
         Build.DEVICE = walleye
-        Build.VERSION.SDK_INT = 28
+        Build.VERSION.SDK_INT = ${Build.VERSION.SDK_INT}
         Build.MODEL = Pixel 2
         Build.MANUFACTURER = Google
         Build.PRODUCT = walleye
@@ -105,7 +114,7 @@ fun install(activity: Activity) {
         Screen.Density = 420
         Screen.Width = 1080
         Screen.Height = 1794
-        Platforms = arm64-v8a,armeabi-v7a,armeabi
+        Platforms = ${Build.SUPPORTED_ABIS.joinToString(",")}
         SharedLibraries = android.ext.services,android.ext.shared,android.test.base,android.test.mock,android.test.runner,com.android.future.usb.accessory,com.android.ims.rcsmanager,com.android.location.provider,com.android.media.remotedisplay,com.android.mediadrm.signer,com.google.android.camera.experimental2017,com.google.android.dialer.support,com.google.android.gms,com.google.android.hardwareinfo,com.google.android.lowpowermonitordevicefactory,com.google.android.lowpowermonitordeviceinterface,com.google.android.maps,com.google.android.media.effects,com.google.android.poweranomalydatafactory,com.google.android.poweranomalydatamodeminterface,com.google.vr.platform,com.qti.vzw.ims.internal,com.qualcomm.embmslibrary,com.qualcomm.qcrilhook,com.qualcomm.qti.QtiTelephonyServicelibrary,com.quicinc.cne,com.quicinc.cneapiclient,com.verizon.embms,com.verizon.provider,com.vzw.apnlib,javax.obex,org.apache.http.legacy
         Features = android.hardware.audio.low_latency,android.hardware.audio.output,android.hardware.audio.pro,android.hardware.bluetooth,android.hardware.bluetooth_le,android.hardware.camera,android.hardware.camera.any,android.hardware.camera.ar,android.hardware.camera.autofocus,android.hardware.camera.capability.manual_post_processing,android.hardware.camera.capability.manual_sensor,android.hardware.camera.capability.raw,android.hardware.camera.flash,android.hardware.camera.front,android.hardware.camera.level.full,android.hardware.faketouch,android.hardware.fingerprint,android.hardware.location,android.hardware.location.gps,android.hardware.location.network,android.hardware.microphone,android.hardware.nfc,android.hardware.nfc.any,android.hardware.nfc.hce,android.hardware.nfc.hcef,android.hardware.opengles.aep,android.hardware.ram.normal,android.hardware.screen.landscape,android.hardware.screen.portrait,android.hardware.sensor.accelerometer,android.hardware.sensor.assist,android.hardware.sensor.barometer,android.hardware.sensor.compass,android.hardware.sensor.gyroscope,android.hardware.sensor.hifi_sensors,android.hardware.sensor.light,android.hardware.sensor.proximity,android.hardware.sensor.stepcounter,android.hardware.sensor.stepdetector,android.hardware.telephony,android.hardware.telephony.carrierlock,android.hardware.telephony.cdma,android.hardware.telephony.euicc,android.hardware.telephony.gsm,android.hardware.touchscreen,android.hardware.touchscreen.multitouch,android.hardware.touchscreen.multitouch.distinct,android.hardware.touchscreen.multitouch.jazzhand,android.hardware.usb.accessory,android.hardware.usb.host,android.hardware.vr.headtracking,android.hardware.vr.high_performance,android.hardware.vulkan.compute,android.hardware.vulkan.level,android.hardware.vulkan.version,android.hardware.wifi,android.hardware.wifi.aware,android.hardware.wifi.direct,android.hardware.wifi.passpoint,android.hardware.wifi.rtt,android.software.activities_on_secondary_displays,android.software.app_widgets,android.software.autofill,android.software.backup,android.software.cant_save_state,android.software.companion_device_setup,android.software.connectionservice,android.software.cts,android.software.device_admin,android.software.device_id_attestation,android.software.file_based_encryption,android.software.home_screen,android.software.input_methods,android.software.live_wallpaper,android.software.managed_users,android.software.midi,android.software.picture_in_picture,android.software.print,android.software.securely_removes_users,android.software.sip,android.software.sip.voip,android.software.verified_boot,android.software.voice_recognizers,android.software.vr.mode,android.software.webview,com.google.android.apps.dialer.SUPPORTED,com.google.android.apps.photos.PIXEL_2017_PRELOAD,com.google.android.feature.EXCHANGE_6_2,com.google.android.feature.GOOGLE_BUILD,com.google.android.feature.GOOGLE_EXPERIENCE,com.google.android.feature.PIXEL_2017_EXPERIENCE,com.google.android.feature.PIXEL_EXPERIENCE,com.google.android.feature.TURBO_PRELOAD,com.google.android.feature.ZERO_TOUCH,com.google.hardware.camera.easel,com.verizon.hardware.telephony.ehrpd,com.verizon.hardware.telephony.lte
         Locales = af,af_ZA,am,am_ET,ar,ar_EG,ar_XB,as,ast,az,be,bg,bg_BG,bn,bs,ca,ca_ES,cs,cs_CZ,da,da_DK,de,de_DE,el,el_GR,en,en_AU,en_CA,en_GB,en_IN,en_US,en_XA,es,es_ES,es_US,et,eu,fa,fa_IR,fi,fi_FI,fil,fil_PH,fr,fr_BE,fr_CA,fr_FR,gl,gu,hi,hi_IN,hr,hr_HR,hu,hu_HU,hy,in,in_ID,is,it,it_IT,iw,iw_IL,ja,ja_JP,ka,kk,km,kn,ko,ko_KR,ky,lo,lt,lt_LT,lv,lv_LV,mk,ml,mn,mr,ms,ms_MY,my,nb,nb_NO,ne,nl,nl_NL,or,pa,pl,pl_PL,pt,pt_BR,pt_PT,ro,ro_RO,ru,ru_RU,si,sk,sk_SK,sl,sl_SI,sq,sr,sr_Latn,sr_RS,sv,sv_SE,sw,sw_TZ,ta,te,th,th_TH,tr,tr_TR,uk,uk_UA,ur,uz,vi,vi_VN,zh,zh_CN,zh_HK,zh_TW,zu,zu_ZA
@@ -239,9 +248,7 @@ fun install(activity: Activity) {
         injectorZip.openEntryByIndex(i)
         if (injectorZip.isEntryDir) continue
 
-        Log.i("Installer", "injector entry: ${injectorZip.entryName}")
         val bytes = injectorZip.readEntry()
-
         mainApkZip.openEntry(injectorZip.entryName)
         mainApkZip.writeEntry(bytes, bytes.size.toLong())
         mainApkZip.closeEntry()
@@ -259,6 +266,19 @@ fun install(activity: Activity) {
 
     Log.i("Installer", "Signing apks")
     val apkFiles = requireNotNull(buildDir.listFiles { f -> f.extension == "apk" })
+
+    val mainAligned = File(buildDir, "main.apk.aligned")
+    ProcessBuilder()
+        .command(
+            zipalignBinary.absolutePath,
+            "-i ${mainApkFile.absolutePath}",
+            "-o ${mainAligned.absolutePath}",
+            "-a 4",
+            "-f true"
+        )
+        .start()
+        .waitFor()
+    mainAligned.renameTo(mainApkFile)
 
     val keySet = KeystoreUtils.loadKeyStore(keystoreFile)
     val signingConfig = ApkSigner.SignerConfig.Builder(
