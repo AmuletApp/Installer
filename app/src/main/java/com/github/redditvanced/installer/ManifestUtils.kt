@@ -11,23 +11,28 @@ object ManifestUtils {
         val writer = AxmlWriter()
         reader.accept(object : AxmlVisitor(writer) {
             override fun child(ns: String?, name: String) =
-                object : NodeVisitor(super.child(ns, name)) {
+                object : ReplaceAttrsVisitor(super.child(ns, name), mapOf()) {
+
                     override fun child(ns: String?, name: String): NodeVisitor {
-                        val visitor = super.child(ns, name)
-                        return if (name != "uses-sdk") visitor
-                        else object : NodeVisitor(visitor) {
-                            override fun attr(
-                                ns: String?,
-                                name: String,
-                                resourceId: Int,
-                                type: Int,
-                                value: Any
-                            ) {
-                                var obj = value
-                                if ("targetSdkVersion" == name)
-                                    obj = 29
-                                super.attr(ns, name, resourceId, type, obj)
+                        val nv = super.child(ns, name)
+                        return when (name) {
+                            "application" -> object :
+                                ReplaceAttrsVisitor(
+                                    nv,
+                                    mapOf("label" to "Aliucord", "extractNativeLibs" to false)
+                                ) {
+                                override fun child(ns: String?, name: String): NodeVisitor {
+                                    val nv = super.child(ns, name)
+                                    return when (name) {
+                                        "activity" -> ReplaceAttrsVisitor(
+                                            nv,
+                                            mapOf("label" to "Amulet")
+                                        )
+                                        else -> nv
+                                    }
+                                }
                             }
+                            else -> nv
                         }
                     }
                 }

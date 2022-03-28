@@ -7,6 +7,9 @@ dependencyResolutionManagement {
         maven {
             url "https://jitpack.io"
         }
+        maven {
+            url "https://redditvanced.ddns.net/maven/releases"
+        }
     }
 }
 rootProject.name = "Installer"

@@ -15,11 +15,12 @@ import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
-import com.aliucord.libzip.Zip
 import com.android.apksig.ApkSigner
 import com.aurora.gplayapi.exceptions.ApiException
 import com.aurora.gplayapi.helpers.AuthHelper
 import com.aurora.gplayapi.helpers.PurchaseHelper
+import com.github.diamondminer88.zip.ZipReader
+import com.github.diamondminer88.zip.ZipWriter
 import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.fuel.httpGet
 import com.github.kittinunf.result.Result
@@ -74,7 +75,6 @@ fun install(activity: Activity) {
     Build.SUPPORTED_ABIS.first { it in supportedABIs }
         ?: throw Error("Unsupported ABI!")
 
-    Log.i("Installer", "Extracting zipalign binary")
     val zipalignBinary = File(activity.applicationInfo.nativeLibraryDir, "libzipalign.so")
 
     // TODO: check if already installed but keystore gone
@@ -198,88 +198,51 @@ fun install(activity: Activity) {
     Log.i("Installer", "Downloaded APKs in ${time}ms")
 
     Log.i("Installer", "Patching main apk")
-    var mainApkZip = Zip(mainApkFile.absolutePath, 6, 'r')
+    val mainReader = ZipReader(mainApkFile)
 
     var dexCount = 0
-    val entryDexRegex = "classes(\\d).dex".toRegex()
-    for (i in 0 until mainApkZip.totalEntries) {
-        mainApkZip.openEntryByIndex(i)
-        val name = mainApkZip.entryName
-        mainApkZip.closeEntry()
-
-        val index = entryDexRegex.find(name)
-            ?.groupValues
-            ?.get(1)
-            ?.toIntOrNull()
-            ?: continue
-        if (dexCount < index) dexCount = index
+    mainReader.entryNames.forEach {
+        if (it.startsWith("classes"))
+            dexCount++
     }
 
-    // Read original AndroidManifest.xml
-    mainApkZip.openEntry("AndroidManifest.xml")
-    val originalManifest = mainApkZip.readEntry()
-    mainApkZip.closeEntry()
+    val originalManifest = mainReader.openEntry("AndroidManifest.xml")!!.read()
+    val originalClassesDex = mainReader.openEntry("classes.dex")!!.read()
+    mainReader.close()
 
-    // Read original classes.dex
-    mainApkZip.openEntry("classes.dex")
-    val originalClassesDex = mainApkZip.readEntry()
-    mainApkZip.closeEntry()
-
-    // Reopen APK with append (writing) flag
-    mainApkZip.close()
-    mainApkZip = Zip(mainApkFile.absolutePath, 6, 'a')
-
-    // Delete original AndroidManifest.xml
-    mainApkZip.deleteEntry("AndroidManifest.xml")
-
-    // Write original classes.dex to the end of the classesN.dex list
-    mainApkZip.deleteEntry("classes.dex")
-    mainApkZip.openEntry("classes${dexCount + 1}.dex")
-    mainApkZip.writeEntry(originalClassesDex, originalClassesDex.size.toLong())
-    mainApkZip.closeEntry()
-
-    // libzip will corrupt apk if I write more stuff without reloading
-    mainApkZip.close()
-    mainApkZip = Zip(mainApkFile.absolutePath, 6, 'a')
+    val mainWriter = ZipWriter(mainApkFile, true)
+    mainWriter.deleteEntries("AndroidManifest.xml", "classes.dex")
+    mainWriter.writeEntry("classes${dexCount + 1}.dex", originalClassesDex)
 
     // Copy injector zip contents into apk
-    val injectorZip = Zip(getInjector(activity).absolutePath, 6, 'r')
-    for (i in 0 until injectorZip.totalEntries) {
-        injectorZip.openEntryByIndex(i)
-        if (injectorZip.isEntryDir) continue
-
-        val bytes = injectorZip.readEntry()
-        mainApkZip.openEntry(injectorZip.entryName)
-        mainApkZip.writeEntry(bytes, bytes.size.toLong())
-        mainApkZip.closeEntry()
-
-        injectorZip.closeEntry()
+    ZipReader(getInjector(activity)).use { injector ->
+        injector.forEach {
+            if (!it.isDir)
+                mainWriter.writeEntryUncompressed(it.name, it.read())
+        }
     }
-    injectorZip.close()
 
     // Change AndroidManifest targetSdkVersion to 29 (Credit to Juby)
     val newManifest = ManifestUtils.editManifest(originalManifest)
-    mainApkZip.openEntry("AndroidManifest.xml")
-    mainApkZip.writeEntry(newManifest, newManifest.size.toLong())
-    mainApkZip.closeEntry()
-    mainApkZip.close()
+    mainWriter.writeEntry("AndroidManifest.xml", newManifest)
+    mainWriter.close()
 
-    Log.i("Installer", "Signing apks")
-    val apkFiles = requireNotNull(buildDir.listFiles { f -> f.extension == "apk" })
-
+    Log.i("Installer", "zipalign-ing apk")
     val mainAligned = File(buildDir, "main.apk.aligned")
     ProcessBuilder()
         .command(
             zipalignBinary.absolutePath,
-            "-i ${mainApkFile.absolutePath}",
-            "-o ${mainAligned.absolutePath}",
-            "-a 4",
-            "-f true"
+            "-p",
+            "-f",
+            "4",
+            mainApkFile.absolutePath,
+            mainAligned.absolutePath,
         )
-        .start()
-        .waitFor()
+        .start().waitFor()
     mainAligned.renameTo(mainApkFile)
 
+    Log.i("Installer", "Signing apks")
+    val apkFiles = requireNotNull(buildDir.listFiles { f -> f.extension == "apk" })
     val keySet = KeystoreUtils.loadKeyStore(keystoreFile)
     val signingConfig = ApkSigner.SignerConfig.Builder(
         "RedditVanced Signer",
