@@ -200,13 +200,9 @@ fun install(activity: Activity) {
     Log.i("Installer", "Patching main apk")
     val mainReader = ZipReader(mainApkFile)
 
-    var dexCount = 0
-    mainReader.entryNames.forEach {
-        if (it.startsWith("classes"))
-            dexCount++
-    }
+    val dexCount = mainReader.entryNames.count { it.startsWith("classes") }
 
-    val originalManifest = mainReader.openEntry("AndroidManifest.xml")!!.read()
+//    val originalManifest = mainReader.openEntry("AndroidManifest.xml")!!.read()
     val originalClassesDex = mainReader.openEntry("classes.dex")!!.read()
     mainReader.close()
 
@@ -222,9 +218,13 @@ fun install(activity: Activity) {
         }
     }
 
-    // Change AndroidManifest targetSdkVersion to 29 (Credit to Juby)
-    val newManifest = ManifestUtils.editManifest(originalManifest)
-    mainWriter.writeEntry("AndroidManifest.xml", newManifest)
+    // Edit AndroidManifest for main apk
+//    val newManifest = ManifestUtils.editManifest(originalManifest)
+//    mainWriter.writeEntry("AndroidManifest.xml", newManifest)
+    mainWriter.writeEntry(
+        "AndroidManifest.xml",
+        activity.resources.openRawResource(R.raw.manifest).readBytes()
+    )
     mainWriter.close()
 
     Log.i("Installer", "zipalign-ing apk")
