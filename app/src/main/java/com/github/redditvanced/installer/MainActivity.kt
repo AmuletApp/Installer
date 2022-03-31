@@ -1,12 +1,15 @@
 package com.github.redditvanced.installer
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -31,6 +34,7 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.*
 import kotlin.concurrent.thread
+import kotlin.system.exitProcess
 import kotlin.system.measureTimeMillis
 
 class MainActivity : ComponentActivity() {
@@ -43,10 +47,11 @@ class MainActivity : ComponentActivity() {
                 Surface(color = MaterialTheme.colors.background) {
                     Button(onClick = {
                         if (!installing) {
-                            Toast(this).apply {
-                                setText("Do not exit until apk install prompt is shown!")
-                                show()
-                            }
+                            Toast.makeText(
+                                this,
+                                "Do not exit until apk install prompt is shown!",
+                                Toast.LENGTH_LONG
+                            ).show()
                             installing = true
                             thread(true) { install(this) }
                         }
@@ -70,7 +75,18 @@ data class AccountCredentials(
 val baseDir = File(Environment.getExternalStorageDirectory(), "RedditVanced")
 val buildDir = File(baseDir, "build")
 
+// TODO: figure out permissions for lower api perms
+@SuppressLint("NewApi")
 fun install(activity: Activity) {
+    if (!Environment.isExternalStorageManager()) {
+        val intent = Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:${activity.packageName}")
+        )
+        activity.startActivity(intent)
+        exitProcess(0)
+    }
+
     Log.i("Installer", "Device ABIs: ${Build.SUPPORTED_ABIS.joinToString()}")
     Build.SUPPORTED_ABIS.first { it in supportedABIs }
         ?: throw Error("Unsupported ABI!")
@@ -290,7 +306,10 @@ fun install(activity: Activity) {
 
 fun getInjector(activity: Activity): File {
     val customInjector = File(buildDir, "injector.zip")
-    if (customInjector.exists()) return customInjector
+    if (customInjector.exists()) {
+        Log.i("Installer", "Custom Injector exists, using that one.")
+        return customInjector
+    }
 
     val cachedInjector = File(activity.codeCacheDir, "injector.zip")
 
