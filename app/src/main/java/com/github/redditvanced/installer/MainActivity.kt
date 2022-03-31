@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
 }
 
 const val BASE_URL = "https://redditvanced.ddns.net"
-val supportedABIs = listOf("arm64-v8a", "armeabi-v7a", "x86-64")
+val supportedABIs = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 
 data class AccountCredentials(
     val username: String,
@@ -88,7 +88,7 @@ fun install(activity: Activity) {
     }
 
     Log.i("Installer", "Device ABIs: ${Build.SUPPORTED_ABIS.joinToString()}")
-    Build.SUPPORTED_ABIS.first { it in supportedABIs }
+    Build.SUPPORTED_ABIS.firstOrNull { it in supportedABIs }
         ?: throw Error("Unsupported ABI!")
 
     val zipalignBinary = File(activity.applicationInfo.nativeLibraryDir, "libzipalign.so")
