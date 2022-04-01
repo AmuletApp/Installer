@@ -11,13 +11,17 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.util.Log
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material.Button
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Surface
-import androidx.compose.material.Text
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.android.apksig.ApkSigner
 import com.aurora.gplayapi.exceptions.ApiException
 import com.aurora.gplayapi.helpers.AuthHelper
@@ -38,26 +42,38 @@ import kotlin.system.exitProcess
 import kotlin.system.measureTimeMillis
 
 class MainActivity : ComponentActivity() {
-    var installing = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             InstallerTheme {
                 Surface(color = MaterialTheme.colors.background) {
-                    Button(onClick = {
-                        if (!installing) {
-                            Toast.makeText(
-                                this,
-                                "Do not exit until apk install prompt is shown!",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            installing = true
-                            thread(true) { install(this) }
+
+                    var installing by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(text = "Do not exit until install prompt is shown!")
+                            Button(
+                                enabled = !installing,
+                                onClick = {
+                                    installing = true
+                                    thread(true) {
+                                        install(this@MainActivity)
+                                        installing = false
+                                    }
+                                }
+                            ) { Text("Install") }
+
+                            if (installing)
+                                CircularProgressIndicator()
                         }
-                    }) {
-                        Text("Install")
                     }
+
                 }
             }
         }
